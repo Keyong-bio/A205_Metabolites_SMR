@@ -1,0 +1,544 @@
+---
+title: "Meta_Analysis"
+author: "Keyong"
+date: "2024-04-25"
+output: html_document
+---
+
+## Meta-analysis
+- CLSA
+- UK
+
+```{r meta-analysis}
+## 
+rm(list = ls())
+
+# load(file = "CLSA_to_NAFLD_1e6_res.Rdata") # CLSA_to_NAFLD_1e6
+load(file = "CLSA_to_NAFLD_1e6_res_0506.Rdata") # CLSA_to_NAFLD_1e6
+load(file = "CLSA_to_NAFLD_5e8_res.Rdata") # CLSA_to_NAFLD_5e8
+load(file = "UK_to_NAFLD_1e6_res_0506.Rdata") # UK_to_NAFLD_1e6
+load(file = "UK_to_NAFLD_5e8_res0506.Rdata") # UK_to_NAFLD_5e8
+
+## read the metabolite names for UK data
+Metabo_list <- read.xlsx(xlsxFile = "Metabolite_list_Keyong.xlsx", sheet = 2)
+Metabo_list$MA_code <- paste0("M", Metabo_list$MB_ID)
+
+Met_1e6_CLSA <- bind_rows(CLSA_to_NAFLD_1e6[[1]],
+                          CLSA_to_NAFLD_1e6[[3]],
+                          CLSA_to_NAFLD_1e6[[5]]) %>% 
+  mutate(exposure = tolower(exposure))
+
+
+Met_1e6_UK <- bind_rows(UK_to_NAFLD_1e6[[1]],
+                        UK_to_NAFLD_1e6[[3]],
+                        UK_to_NAFLD_1e6[[5]]) %>% 
+  merge(Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T) %>% 
+  mutate(CHEMICAL_NAME = tolower(CHEMICAL_NAME)) %>% 
+  relocate(CHEMICAL_NAME)
+
+Met_1e6_CLSA_fdr <- bind_rows(CLSA_to_NAFLD_1e6[[2]],
+                          CLSA_to_NAFLD_1e6[[4]],
+                          CLSA_to_NAFLD_1e6[[6]]) %>% 
+  mutate(exposure = tolower(exposure))
+
+Met_1e6_UK_fdr <- bind_rows(UK_to_NAFLD_1e6[[2]],
+                        UK_to_NAFLD_1e6[[4]],
+                        UK_to_NAFLD_1e6[[6]]) %>% 
+  merge(Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T) %>% 
+  mutate(CHEMICAL_NAME = tolower(CHEMICAL_NAME)) %>% 
+  relocate(CHEMICAL_NAME)
+
+head(Met_1e6_CLSA_fdr) #
+head(Met_1e6_UK_fdr) #
+
+Vars1 = union(Met_1e6_CLSA_fdr$exposure, Met_1e6_UK_fdr$CHEMICAL_NAME) # 21 mets
+
+Met_1e6_CLSA_select <- Met_1e6_CLSA %>% 
+  filter(exposure %in% Vars1)
+length(table(Met_1e6_CLSA_select$exposure)) # 21 mets
+
+Met_1e6_UK_select <- Met_1e6_UK %>% 
+  filter(CHEMICAL_NAME %in% Vars1)
+length(table(Met_1e6_UK_select$exposure)) # 18 mets
+
+Met_1e6_CLSA_select <- Met_1e6_CLSA_select %>% 
+  filter(exposure %in% Met_1e6_UK_select$CHEMICAL_NAME)
+
+length(table(Met_1e6_CLSA_select$exposure)) # 18 mets
+
+save(Met_1e6_CLSA_select, Met_1e6_UK_select, file = "Met_1e6_NAFLD_res.Rdata")
+```
+
+
+```{r meta-analysis}
+### 5e8
+Met_5e8_CLSA <- bind_rows(CLSA_to_NAFLD_5e8[[1]],
+                          CLSA_to_NAFLD_5e8[[3]],
+                          CLSA_to_NAFLD_5e8[[5]]) %>% 
+  mutate(exposure = tolower(exposure))
+
+Met_5e8_UK <- bind_rows(UK_to_NAFLD_5e8[[1]],
+                        UK_to_NAFLD_5e8[[3]],
+                        UK_to_NAFLD_5e8[[5]]) %>% 
+  merge(Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T) %>% 
+  mutate(CHEMICAL_NAME = tolower(CHEMICAL_NAME)) %>% 
+  relocate(CHEMICAL_NAME)
+
+Met_5e8_CLSA_fdr <- bind_rows(CLSA_to_NAFLD_5e8[[2]],
+                          CLSA_to_NAFLD_5e8[[4]],
+                          CLSA_to_NAFLD_5e8[[6]]) %>% 
+  mutate(exposure = tolower(exposure))
+
+Met_5e8_UK_fdr <- bind_rows(UK_to_NAFLD_5e8[[2]],
+                        UK_to_NAFLD_5e8[[4]],
+                        UK_to_NAFLD_5e8[[6]]) %>% 
+  merge(Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T) %>% 
+  mutate(CHEMICAL_NAME = tolower(CHEMICAL_NAME)) %>% 
+  relocate(CHEMICAL_NAME)
+
+Var2 = intersect(Met_1e6_CLSA_fdr$exposure, Met_5e8_CLSA_fdr$exposure) # 7 out of 16 were  replicated in the stringent criteria
+
+Var3 = intersect(Met_1e6_UK_fdr$CHEMICAL_NAME, Met_5e8_UK_fdr$CHEMICAL_NAME) # 5 out of 13 were  replicated in the stringent criteria
+
+intersect(Var2, Var3) # 2 Met
+Var4 = union(Var2, Var3) # 10 Mets
+
+# intersect(Met_1e6_CLSA_select$exposure, Var4)
+
+Met_5e8_CLSA_select = Met_5e8_CLSA %>% 
+  filter(exposure %in% Var4)
+length(table(Met_5e8_CLSA_select$exposure)) # 10 metabolites
+
+Met_5e8_UK_select = Met_5e8_UK %>% 
+  filter(CHEMICAL_NAME %in% Var4)
+length(table(Met_5e8_UK_select$CHEMICAL_NAME)) # 8 metabolites
+
+Met_5e8_CLSA_select <- Met_5e8_CLSA_select %>% 
+  filter(exposure %in% Met_5e8_UK_select$CHEMICAL_NAME)
+length(table(Met_5e8_CLSA_select$exposure)) # 8 metabolites
+
+save(Met_5e8_CLSA_select, Met_5e8_UK_select, file = "Met_5e8_NAFLD_res.Rdata")
+```
+
+### Export results 
+
+```{r}
+
+fwrite(Met_1e6_CLSA_select, file = "Met_1e6_CLSA_select.txt", quote = F, row.names = F, col.names = T)
+fwrite(Met_1e6_UK_select, file = "Met_1e6_UK_select.txt", quote = F, row.names = F, col.names = T)
+fwrite(Met_5e8_CLSA_select, file = "Met_5e8_CLSA_select.txt", quote = F, row.names = F, col.names = T)
+fwrite(Met_5e8_UK_select, file = "Met_5e8_UK_select.txt", quote = F, row.names = F, col.names = T)
+
+```
+
+
+## Meta-analysis
+
+```{r meta-analysis}
+
+######### Meta-Analysis #################
+
+## At 1e6 threshold
+
+library(metafor)
+
+Met_1e6 <- unique(intersect(Met_1e6_CLSA_select$exposure, Met_1e6_UK_select$CHEMICAL_NAME)) # 18 metabolites
+Met_1e6 <- rep(Met_1e6, each = 2)
+
+# Met_1e6
+
+dataset_Met_NAFLD <- data.frame(matrix(ncol=1, nrow= 36))
+
+for (i in seq(1, 35, by = 2)) {
+  
+  # i = 1
+  print(Met_1e6[[i]])
+  
+  biopsy_NAFLD <- Met_1e6_CLSA_select %>% 
+    filter(exposure == Met_1e6[[i]] & outcome == "NAFLD_Biopsy")
+
+  
+  biopsy_NAFLD2 <- Met_1e6_UK_select %>% dplyr::filter(CHEMICAL_NAME == Met_1e6[[i]] & outcome == "NAFLD_Biopsy") %>%
+          mutate(method = factor(method,
+                         levels = c("Inverse variance weighted", 
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+    
+  
+  dataset_Met_NAFLD$"exposure"[i] <- paste("CLSA_", biopsy_NAFLD[1,1])
+  dataset_Met_NAFLD$"outcome"[i] <-  "NAFLD"
+  dataset_Met_NAFLD$"biopsy_n"[i] <- biopsy_NAFLD[1,4]
+  dataset_Met_NAFLD$"biopsy_b"[i] <-  biopsy_NAFLD[1,5]
+  dataset_Met_NAFLD$"biopsy_se"[i] <-  biopsy_NAFLD[1,6]
+  dataset_Met_NAFLD$"biopsy_p"[i] <-  biopsy_NAFLD[1,7]
+  
+  dataset_Met_NAFLD$"exposure"[i+1] <- paste("UK_", biopsy_NAFLD2[1,1])
+  dataset_Met_NAFLD$"outcome"[i+1] <- "NAFLD"
+  dataset_Met_NAFLD$"biopsy_n"[i+1] <- biopsy_NAFLD2[1,5]
+  dataset_Met_NAFLD$"biopsy_b"[i+1] <-  biopsy_NAFLD2[1,6]
+  dataset_Met_NAFLD$"biopsy_se"[i+1] <-  biopsy_NAFLD2[1,7]
+  dataset_Met_NAFLD$"biopsy_p"[i+1] <-  biopsy_NAFLD2[1,8]
+  
+  
+  MVP_NAFLD <- Met_1e6_CLSA_select %>% 
+    filter(exposure == Met_1e6[[i]] & outcome == "NAFLD_MVP_cohort")
+  
+  MVP_NAFLD2 <- Met_1e6_UK_select %>% filter(CHEMICAL_NAME == Met_1e6[[i]]  & outcome == "NAFLD_MVP_cohort") %>%
+      mutate(method = factor(method,
+                         levels = c("Inverse variance weighted", 
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+  
+  dataset_Met_NAFLD$"mvp_n"[i] <- MVP_NAFLD[1,4]
+  dataset_Met_NAFLD$"mvp_b"[i] <-  MVP_NAFLD[1,5]
+  dataset_Met_NAFLD$"mvp_se"[i] <-  MVP_NAFLD[1,6]
+  dataset_Met_NAFLD$"mvp_p"[i] <-  MVP_NAFLD[1,7]
+  
+  dataset_Met_NAFLD$"mvp_n"[i+1] <- MVP_NAFLD2[1,5]
+  dataset_Met_NAFLD$"mvp_b"[i+1] <-  MVP_NAFLD2[1,6]
+  dataset_Met_NAFLD$"mvp_se"[i+1] <-  MVP_NAFLD2[1,7]
+  dataset_Met_NAFLD$"mvp_p"[i+1] <-  MVP_NAFLD2[1,8]
+  
+  EHR_NAFLD <- Met_1e6_CLSA_select %>% filter(exposure == Met_1e6[[i]] & outcome == "Medical_Record_NAFLD")
+  EHR_NAFLD2 <- Met_1e6_UK_select %>% filter(CHEMICAL_NAME == Met_1e6[[i]] & outcome == "Medical_Record_NAFLD") %>% 
+          mutate(method = factor(method,
+                         levels = c("Inverse variance weighted", 
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+  
+  dataset_Met_NAFLD$"EHR_n"[i] <- EHR_NAFLD[1,4]
+  dataset_Met_NAFLD$"EHR_b"[i] <-  EHR_NAFLD[1,5]
+  dataset_Met_NAFLD$"EHR_se"[i] <-  EHR_NAFLD[1,6]
+  dataset_Met_NAFLD$"EHR_p"[i] <-  EHR_NAFLD[1,7]
+  
+  dataset_Met_NAFLD$"EHR_n"[i+1] <- EHR_NAFLD2[1,5]
+  dataset_Met_NAFLD$"EHR_b"[i+1] <-  EHR_NAFLD2[1,6]
+  dataset_Met_NAFLD$"EHR_se"[i+1] <-  EHR_NAFLD2[1,7]
+  dataset_Met_NAFLD$"EHR_p"[i+1] <-  EHR_NAFLD2[1,8]
+  
+  beta <- c(biopsy_NAFLD$b[1], MVP_NAFLD$b[1], EHR_NAFLD$b[1], biopsy_NAFLD2$b[1], MVP_NAFLD2$b[1], EHR_NAFLD2$b[1])
+  se <- c(biopsy_NAFLD$se[1], MVP_NAFLD$se[1], EHR_NAFLD$se[1], biopsy_NAFLD2$se[1], MVP_NAFLD2$se[1], EHR_NAFLD2$se[1])
+  data <- data.frame(r = beta, se = se)
+  
+  meta_result_reml <- rma.uni(r, sei = se , data = data, method = "FE") # fixed effect
+  
+  ## r: effect size, sei: standard error of effect size, 
+  # meta_result_common <- rma.uni(r, sei = se , data = data, method= "EE")
+  meta_result_dl <- rma.uni(r, sei = se , data = data, method = "DL") # random effect
+  
+  dataset_Met_NAFLD$"meta_b_reml"[i] <- meta_result_reml$beta
+  dataset_Met_NAFLD$"meta_se_reml"[i] <- meta_result_reml$se
+  dataset_Met_NAFLD$"meta_pval_reml"[i] <- meta_result_reml$pval
+  dataset_Met_NAFLD$"meta_het_reml"[i] <- meta_result_reml$QEp
+  
+  dataset_Met_NAFLD$"meta_b_reml"[i+1] <- NA
+  dataset_Met_NAFLD$"meta_se_reml"[i+1] <- NA
+  dataset_Met_NAFLD$"meta_pval_reml"[i+1] <-NA
+  dataset_Met_NAFLD$"meta_het_reml"[i+1] <- NA
+  # dataset_Met_NAFLD$"meta_b_common"[i] <- meta_result_common$beta
+  # dataset_Met_NAFLD$"meta_se_common"[i] <- meta_result_common$se
+  # dataset_Met_NAFLD$"meta_pval_common"[i] <- meta_result_common$pval
+  # dataset_Met_NAFLD$"meta_het_common"[i] <- meta_result_common$QEp
+  
+  dataset_Met_NAFLD$"meta_b_dl"[i] <- meta_result_dl$beta
+  dataset_Met_NAFLD$"meta_se_dl"[i] <- meta_result_dl$se
+  dataset_Met_NAFLD$"meta_pval_dl"[i] <- meta_result_dl$pval
+  dataset_Met_NAFLD$"meta_het_dl"[i] <- meta_result_dl$QEp
+  
+  dataset_Met_NAFLD$"meta_b_dl"[i+1] <- NA
+  dataset_Met_NAFLD$"meta_se_dl"[i+1] <- NA
+  dataset_Met_NAFLD$"meta_pval_dl"[i+1] <- NA
+  dataset_Met_NAFLD$"meta_het_dl"[i+1] <- NA
+  
+}
+
+dataset_Met_NAFLD$"p_adj_reml" <- p.adjust(dataset_Met_NAFLD$"meta_pval_reml", method="fdr") ## multiple correction
+# dataset_Met_NAFLD$"p_adj_common" <- p.adjust(dataset_Met_NAFLD$"meta_pval_common" , method="fdr") ## multiple correction
+dataset_Met_NAFLD$"p_adj_dl" <- p.adjust(dataset_Met_NAFLD$"meta_pval_dl" , method="fdr") ## multiple correction
+
+```
+
+### Another threshold
+
+```{r}
+Met_5e8 <- unique(c(Met_5e8_CLSA_select$exposure, Met_5e8_UK_select$CHEMICAL_NAME)) # 8 metabolites
+
+Met_5e8 <- rep(Met_5e8, each = 2) # 16
+Met_5e8
+
+dataset_Met_NAFLD_2 <- data.frame(matrix(ncol=1, nrow= 16))
+
+for (i in seq(1, 15, by = 2)) {
+  
+  # i = 1
+  print(Met_5e8[[i]])
+  
+  biopsy_NAFLD <- Met_5e8_CLSA %>% 
+    filter(exposure == Met_5e8[[i]] & outcome == "NAFLD_Biopsy")
+
+  biopsy_NAFLD2 <- Met_5e8_UK %>% dplyr::filter(CHEMICAL_NAME == Met_5e8[[i]] & outcome == "NAFLD_Biopsy") %>%
+          mutate(method = factor(method,
+                         levels = c("Inverse variance weighted", 
+                                    "Wald ratio",
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+    
+  
+  dataset_Met_NAFLD_2$"exposure"[i] <- paste("CLSA_", biopsy_NAFLD[1,1])
+  dataset_Met_NAFLD_2$"outcome"[i] <-  "NAFLD"
+  dataset_Met_NAFLD_2$"biopsy_n"[i] <- biopsy_NAFLD[1,4]
+  dataset_Met_NAFLD_2$"biopsy_b"[i] <-  biopsy_NAFLD[1,5]
+  dataset_Met_NAFLD_2$"biopsy_se"[i] <-  biopsy_NAFLD[1,6]
+  dataset_Met_NAFLD_2$"biopsy_p"[i] <-  biopsy_NAFLD[1,7]
+  
+  dataset_Met_NAFLD_2$"exposure"[i+1] <- paste("UK_", biopsy_NAFLD2[1,1])
+  dataset_Met_NAFLD_2$"outcome"[i+1] <- "NAFLD"
+  dataset_Met_NAFLD_2$"biopsy_n"[i+1] <- biopsy_NAFLD2[1,5]
+  dataset_Met_NAFLD_2$"biopsy_b"[i+1] <-  biopsy_NAFLD2[1,6]
+  dataset_Met_NAFLD_2$"biopsy_se"[i+1] <-  biopsy_NAFLD2[1,7]
+  dataset_Met_NAFLD_2$"biopsy_p"[i+1] <-  biopsy_NAFLD2[1,8]
+  
+  
+  MVP_NAFLD <- Met_5e8_CLSA %>% 
+    filter(exposure == Met_5e8[[i]] & outcome == "NAFLD_MVP_cohort")
+  
+  MVP_NAFLD2 <- Met_5e8_UK %>% filter(CHEMICAL_NAME == Met_5e8[[i]] & outcome == "NAFLD_MVP_cohort") %>%
+      mutate(method = factor(method,
+                         levels = c("Inverse variance weighted",
+                                    "Wald ratio",
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+  
+  dataset_Met_NAFLD_2$"mvp_n"[i] <- MVP_NAFLD[1,4]
+  dataset_Met_NAFLD_2$"mvp_b"[i] <-  MVP_NAFLD[1,5]
+  dataset_Met_NAFLD_2$"mvp_se"[i] <-  MVP_NAFLD[1,6]
+  dataset_Met_NAFLD_2$"mvp_p"[i] <-  MVP_NAFLD[1,7]
+  
+  dataset_Met_NAFLD_2$"mvp_n"[i+1] <- MVP_NAFLD2[1,5]
+  dataset_Met_NAFLD_2$"mvp_b"[i+1] <-  MVP_NAFLD2[1,6]
+  dataset_Met_NAFLD_2$"mvp_se"[i+1] <-  MVP_NAFLD2[1,7]
+  dataset_Met_NAFLD_2$"mvp_p"[i+1] <-  MVP_NAFLD2[1,8]
+  
+  EHR_NAFLD <- Met_5e8_CLSA %>% filter(exposure == Met_5e8[[i]] & outcome == "Medical_Record_NAFLD")
+  EHR_NAFLD2 <- Met_5e8_UK  %>% filter(CHEMICAL_NAME == Met_5e8[[i]] & outcome == "Medical_Record_NAFLD") %>% 
+          mutate(method = factor(method,
+                         levels = c("Inverse variance weighted", 
+                                    "Wald ratio",
+                                    "Inverse variance weighted (fixed effects)",
+                                    "MR Egger",
+                                    "Simple mode",
+                                    "Weighted median",
+                                    "Weighted mode"))) %>% 
+    arrange(method)
+  
+  dataset_Met_NAFLD_2$"EHR_n"[i] <- EHR_NAFLD[1,4]
+  dataset_Met_NAFLD_2$"EHR_b"[i] <-  EHR_NAFLD[1,5]
+  dataset_Met_NAFLD_2$"EHR_se"[i] <-  EHR_NAFLD[1,6]
+  dataset_Met_NAFLD_2$"EHR_p"[i] <-  EHR_NAFLD[1,7]
+  
+  dataset_Met_NAFLD_2$"EHR_n"[i+1] <- EHR_NAFLD2[1,5]
+  dataset_Met_NAFLD_2$"EHR_b"[i+1] <-  EHR_NAFLD2[1,6]
+  dataset_Met_NAFLD_2$"EHR_se"[i+1] <-  EHR_NAFLD2[1,7]
+  dataset_Met_NAFLD_2$"EHR_p"[i+1] <-  EHR_NAFLD2[1,8]
+  
+  beta <- c(biopsy_NAFLD$b[1], MVP_NAFLD$b[1], EHR_NAFLD$b[1], biopsy_NAFLD2$b[1], MVP_NAFLD2$b[1], EHR_NAFLD2$b[1])
+  se <- c(biopsy_NAFLD$se[1], MVP_NAFLD$se[1], EHR_NAFLD$se[1], biopsy_NAFLD2$se[1], MVP_NAFLD2$se[1], EHR_NAFLD2$se[1])
+  data <- data.frame(r = beta, se = se)
+  
+  meta_result_reml <- rma.uni(r, sei = se , data = data, method = "FE") # fixed effect
+  
+  ## r: effect size, sei: standard error of effect size, 
+  # meta_result_common <- rma.uni(r, sei = se , data = data, method= "EE")
+  meta_result_dl <- rma.uni(r, sei = se , data = data, method = "DL") # random effect 
+  
+  dataset_Met_NAFLD_2$"meta_b_reml"[i] <- meta_result_reml$beta
+  dataset_Met_NAFLD_2$"meta_se_reml"[i] <- meta_result_reml$se
+  dataset_Met_NAFLD_2$"meta_pval_reml"[i] <- meta_result_reml$pval
+  dataset_Met_NAFLD_2$"meta_het_reml"[i] <- meta_result_reml$QEp
+  
+  dataset_Met_NAFLD_2$"meta_b_reml"[i+1] <- NA
+  dataset_Met_NAFLD_2$"meta_se_reml"[i+1] <- NA
+  dataset_Met_NAFLD_2$"meta_pval_reml"[i+1] <-NA
+  dataset_Met_NAFLD_2$"meta_het_reml"[i+1] <- NA
+  # dataset_Met_NAFLD$"meta_b_common"[i] <- meta_result_common$beta
+  # dataset_Met_NAFLD$"meta_se_common"[i] <- meta_result_common$se
+  # dataset_Met_NAFLD$"meta_pval_common"[i] <- meta_result_common$pval
+  # dataset_Met_NAFLD$"meta_het_common"[i] <- meta_result_common$QEp
+  
+  dataset_Met_NAFLD_2$"meta_b_dl"[i] <- meta_result_dl$beta
+  dataset_Met_NAFLD_2$"meta_se_dl"[i] <- meta_result_dl$se
+  dataset_Met_NAFLD_2$"meta_pval_dl"[i] <- meta_result_dl$pval
+  dataset_Met_NAFLD_2$"meta_het_dl"[i] <- meta_result_dl$QEp
+  
+  dataset_Met_NAFLD_2$"meta_b_dl"[i+1] <- NA
+  dataset_Met_NAFLD_2$"meta_se_dl"[i+1] <- NA
+  dataset_Met_NAFLD_2$"meta_pval_dl"[i+1] <- NA
+  dataset_Met_NAFLD_2$"meta_het_dl"[i+1] <- NA
+  
+}
+
+dataset_Met_NAFLD_2$"p_adj_reml" <- p.adjust(dataset_Met_NAFLD_2$"meta_pval_reml", method="fdr") ## multiple correction
+# dataset_Met_NAFLD$"p_adj_common" <- p.adjust(dataset_Met_NAFLD$"meta_pval_common" , method="fdr") ## multiple correction
+dataset_Met_NAFLD_2$"p_adj_dl" <- p.adjust(dataset_Met_NAFLD_2$"meta_pval_dl" , method="fdr") ## multiple correction
+
+
+```
+```{r Exports}
+fwrite(dataset_Met_NAFLD, file = "dataset_Met_NAFLD_1e6_final.txt", quote = F, sep = "\t", row.names = F)
+fwrite(dataset_Met_NAFLD_2, file = "dataset_Met_NAFLD_5e8_final.txt", quote = F, sep = "\t", row.names = F)
+```
+
+
+## Plot the figure
+```{r plot}
+# colnames(dataset_Met_NAFLD)
+dataset_Met_NAFLD.plot <- dataset_Met_NAFLD %>% 
+  select(-colnames(dataset_Met_NAFLD)[1]) %>% 
+  dplyr::mutate(biopsy_OR = exp(biopsy_b),
+                biopsy_lowOR = exp(biopsy_b - 1.96*biopsy_se),
+                biopsy_upOR = exp(biopsy_b + 1.96*biopsy_se),
+                mvp_OR = exp(mvp_b),
+                mvp_lowOR = exp(mvp_b - 1.96*mvp_se),
+                mvp_upOR = exp(mvp_b + 1.96*mvp_se),
+                EHR_OR = exp(EHR_b),
+                EHR_lowOR = exp(EHR_b - 1.96*EHR_se),
+                EHR_upOR = exp(EHR_b + 1.96*EHR_se),
+                Meta_OR_reml = exp(meta_b_reml),
+                Meta_OR_lowOR_reml = exp(meta_b_reml - 1.96*meta_se_reml),
+                Meta_OR_upOR_reml = exp(meta_b_reml + 1.96*meta_se_reml),
+                # Meta_OR_common = exp(meta_b_common),
+                # Meta_OR_lowOR_common = exp(meta_b_common - 1.96*meta_se_common),
+                # Meta_OR_upOR_common = exp(meta_b_common + 1.96*meta_se_common),
+                Meta_OR_dl = exp(meta_b_dl),
+                Meta_OR_lowOR_dl = exp(meta_b_dl - 1.96*meta_se_dl),
+                Meta_OR_upOR_dl = exp(meta_b_dl + 1.96*meta_se_dl))
+
+dataset_Met_NAFLD.plot.2 <- dataset_Met_NAFLD_2 %>% 
+  dplyr::mutate(biopsy_OR = exp(biopsy_b),
+                biopsy_lowOR = exp(biopsy_b - 1.96*biopsy_se),
+                biopsy_upOR = exp(biopsy_b + 1.96*biopsy_se),
+                mvp_OR = exp(mvp_b),
+                mvp_lowOR = exp(mvp_b - 1.96*mvp_se),
+                mvp_upOR = exp(mvp_b + 1.96*mvp_se),
+                EHR_OR = exp(EHR_b),
+                EHR_lowOR = exp(EHR_b - 1.96*EHR_se),
+                EHR_upOR = exp(EHR_b + 1.96*EHR_se),
+                Meta_OR_reml = exp(meta_b_reml),
+                Meta_OR_lowOR_reml = exp(meta_b_reml - 1.96*meta_se_reml),
+                Meta_OR_upOR_reml = exp(meta_b_reml + 1.96*meta_se_reml),
+                # Meta_OR_common = exp(meta_b_common),
+                # Meta_OR_lowOR_common = exp(meta_b_common - 1.96*meta_se_common),
+                # Meta_OR_upOR_common = exp(meta_b_common + 1.96*meta_se_common),
+                Meta_OR_dl = exp(meta_b_dl),
+                Meta_OR_lowOR_dl = exp(meta_b_dl - 1.96*meta_se_dl),
+                Meta_OR_upOR_dl = exp(meta_b_dl + 1.96*meta_se_dl))
+
+
+write.xlsx(dataset_Met_NAFLD.plot, "./dataset_Met_NAFLD.plot1e6.0506.xlsx")
+write.xlsx(dataset_Met_NAFLD.plot.2, "./dataset_Met_NAFLD.plot5e8.0506.xlsx")
+```
+
+### Forestploter
+- Make the forest plot
+```{r}
+library(grid)
+library(forestploter)
+plot.f <- read.xlsx("dataset_Met_NAFLD.plot1e6.0506_forest.xlsx", colNames = T, sheet = 2)
+
+plot.f <- read.xlsx("dataset_Met_NAFLD.plot1e6.0506_forest.xlsx", colNames = T, sheet = 3) # significant one by meta-analysis
+
+# plot.f <- read.xlsx("dataset_Met_NAFLD.plot5e8.0506_forest.xlsx", colNames = T, sheet = 2)
+# 
+# plot.f <- read.xlsx("dataset_Met_NAFLD.plot5e8.0506_forest.xlsx", colNames = T, sheet = 3)
+## Exclude those <= 3SNPs
+# plot.f <- plot.f[-(21:25),]
+
+# plot.f <- plot.f[c(6:10, 26:30),]
+
+plot.f$X1 <- ifelse(is.na(plot.f$N_SNP), 
+                      plot.f$X1,
+                      paste0("   ", plot.f$X1))
+
+plot.f$X1 <- ifelse(is.na(plot.f$Padj), 
+                      plot.f$X1,
+                      paste0("   ", plot.f$X1))
+
+# NA to blank or NA will be transformed to character
+plot.f$N_SNP <- ifelse(is.na(plot.f$N_SNP ), "", plot.f$N_SNP)
+
+plot.f$Padj <- ifelse(is.na(plot.f$Padj), "", 
+                      ifelse(!is.na(plot.f$Padj), sprintf("%.3f", plot.f$Padj),NA))
+
+plot.f$` ` <- paste(rep(" ", 10), collapse = " ")
+
+# Create confidence interval column to display
+plot.f$`OR (95% CI)` <- ifelse(is.na(plot.f$OR), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     plot.f$OR, plot.f$lowOR, plot.f$upOR))
+colnames(plot.f)
+
+
+tm <- forest_theme(base_size = 10,
+                   refline_lwd = 1,
+                   refline_lty = "dashed", 
+                   refline_col = "grey20",
+                   ci_col = "#762a83",
+                   ci_fill = "black",
+                   ci_alpha = 0.8,
+                   ci_pch = 15,
+                   ci_lty = 1,
+                   ci_lwd = 1.5,
+                   ci_Theight = 0.2,
+                   footnote_cex = 0.5)
+
+colnames(plot.f)[1] <- "Name"
+plot.f$Name <- gsub("NAFLD", "MASLD", plot.f$Name)
+
+p <- forest(plot.f[,c(1:2, 6, 7:8)],
+            est = plot.f$OR,
+            lower = plot.f$lowOR, 
+            upper = plot.f$upOR,
+            # sizes = dt$se,
+            ci_column = 4,
+            ref_line = 1,
+            arrow_lab = c("Decreased risk", "Increased risk"),
+            xlim = c(0.1, 2),
+            ticks_at = c(0.5, 1, 1.5, 2),
+            footnote = "Biospy: (Anstee QM et al, 2020)\ncALT: (Vujkovic M et al, 2022)\nEHR: Electronic health record-based (Ghodsian N et al, 2021)",
+            theme = tm)
+
+# Print plot
+# plot(p)
+
+# Change font face
+g <- edit_plot(p, row = c(1, 9, 17, 25, 33, 41), 
+               gp = gpar(fontface = "bold"))
+
+
+# Get width and height
+p_wh <- get_wh(plot = g, unit = "in")
+png('rplot_2.png', res = 300, width = p_wh[1] + 1, height = p_wh[2], units = "in")
+g
+dev.off()
+
+```

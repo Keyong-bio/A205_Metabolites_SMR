@@ -1,0 +1,400 @@
+---
+title: "01_Met_to_NAFLD_UK"
+author: "Keyong"
+date: "2024-03-26"
+output: html_document
+---
+
+## load package
+```{r message=FALSE}
+library(pacman)
+pacman::p_load(data.table, ieugwasr, openxlsx, dplyr,
+       compareGroups, ggplot2, TwoSampleMR, LDlinkR,
+       reshape2, # melt dataset
+       ggcorrplot, # create the correlation matrix
+       ggforestplot, # For forest plots of metabolites
+       broom, # for nice output
+       glmnet, # LASSO regression
+       tableone, # Descriptive 
+       stringr,
+       tidyr, gwasrapidd)
+
+knitr::opts_knit$set(root.dir = '/exports/clinicalepi/Keyong/Project2_Mendelian Randomization')
+```
+
+## GWAS for metabolite in the UK (INTERVAL)
+
+```{r}
+rm(list = ls())
+
+## INTERVAL metabolites (68 files)
+load(file = "./GWAS_Metabolites/GWAS_Met_UK/INTERVAL_UK.Rdata") 
+
+dat[["./INTERVAL_MRC-Epi_M32390.tbl.gz"]] <- dat[["./INTERVAL_MRC-Epi_M32390.tbl.gz"]] %>% 
+  dplyr::mutate(pvalue = as.numeric(pvalue)) %>% ## due to pvalue was character type
+  filter(pvalue < 1e-5) 
+
+dat[["./INTERVAL_MRC-Epi_M33950.tbl.gz"]] <- dat[["./INTERVAL_MRC-Epi_M33950.tbl.gz"]] %>% 
+  dplyr::mutate(pvalue = as.numeric(pvalue)) %>% ## due to pvalue was character type
+  filter(pvalue < 1e-5)
+
+# save(dat, file = "./GWAS_Metabolites/GWAS_Met_UK/INTERVAL_UK_1e-5.Rdata") 
+```
+
+## using map file to convert chrpos into the rsID
+## CHR_POS
+1. GRCh37
+
+```{r chr_pos}
+# chrpos <- fread("./clinicalepi/molepi/chrpos_rs.txt")
+# saveRDS(chrpos, file = "./clinicalepi/Keyong/Project2_Mendelian Randomization/GWAS_Metabolites/GWAS_Met_UK/chrpos_1000.Rdata")
+load(file = "./GWAS_Metabolites/GWAS_Met_UK/INTERVAL_UK_1e-5.Rdata") # p<1e-5
+
+chrpos <- readRDS(file = "./GWAS_Metabolites/GWAS_Met_UK/chrpos_1000.Rdata")
+dt_exom  <- read.table(file = "./GWAS_Metabolites/GWAS_Met_UK/HumanCoreExome-24v1-0_A_rsids.txt", header = T)
+
+INTERVAL1_rsID <- list()
+for (i in 1:68) {
+  # i = 27
+  cat("\nThis is", i, "data")
+  INTERVAL1 <- dat[[i]]
+  INTERVAL1 <- separate(INTERVAL1, col = MarkerName, into = c("CHR", "BP", "A1", "A2"), sep = ":") %>% 
+    separate(col = CHR, into = c("X", "CHR"), sep = "chr") %>% 
+    dplyr::mutate(CHRPOS = paste0(CHR,":", BP)) %>% 
+    dplyr::mutate(Allele1 = toupper(Allele1),
+                  Allele2 = toupper(Allele2)) %>% 
+    dplyr::select(CHRPOS, Allele1:Metabolite)
+  
+  INTERVAL1_merge <- merge(INTERVAL1, chrpos, by.x = "CHRPOS", all.x = T) 
+  # print(sum(is.na(INTERVAL1_merge$SNP))) # 485 NA observations
+  
+  INTERVAL1_merge <- INTERVAL1_merge[!is.na(INTERVAL1_merge$SNP),]
+
+  INTERVAL1_merge_2 <- merge(INTERVAL1_merge, dt_exom, by.x = "SNP", by.y = "Name", all.x = T)
+  
+  INTERVAL1_merge_2$SNP[which(is.na(INTERVAL1_merge_2$RsID) == F)] <- INTERVAL1_merge_2$RsID[which(is.na(INTERVAL1_merge_2$RsID) == F)]
+  
+  INTERVAL1_rsID[[i]] <-  INTERVAL1_merge_2
+  
+  rm(INTERVAL1, INTERVAL1_merge, INTERVAL1_merge_2)
+}
+
+# check1 <- INTERVAL1_rsID[[2]]
+
+INTERVAL1_rsID_1e_6 <- lapply(INTERVAL1_rsID, function(x){
+  x <- x %>% filter(str_detect(SNP, "^rs")) %>% 
+    filter(pvalue < 1e-6) %>% 
+    select(-c("RsID"))
+}) # select SNPs with pvalue < 1e-6
+
+# colnames(INTERVAL1_rsID_1e_6[[1]])
+### using another scenario 
+INTERVAL1_rsID_5e_8 <- lapply(INTERVAL1_rsID, function(x){
+  x <- x %>% filter(str_detect(SNP, "^rs")) %>% 
+    filter(pvalue < 5e-8) %>% 
+    select(-c("RsID"))
+}) # select SNPs with pvalue < 5e-8
+```
+
+## Perform the clumping step
+- Exposure data (UK_Metabolites)
+
+```{r include=FALSE, echo=FALSE}
+## Clump step for exposure
+# untar(tarfile = "./1kg.v3.tgz") # LD refrence panel
+
+# colnames(INTERVAL1_rsID_1e_6[[1]])
+exp.UK.1e6.clump <- lapply(INTERVAL1_rsID_1e_6, function(x){
+  temp <- x %>% rename(rsid = SNP, pval = pvalue)
+  temp1 <- tryCatch({
+     ld_clump(dat = temp, clump_kb = 500, ## 500kb
+              clump_r2 = 0.1, 
+              plink_bin = genetics.binaRies::get_plink_binary(),
+              bfile = "./EUR/EUR")
+  }, error = function(e) {
+    message("Error in ld_clump for dataset: ", e$message)
+    return(NULL) 
+  })
+    return(temp1)
+  })
+
+exp.UK.1e6.clump.cleaned <- exp.UK.1e6.clump[!sapply(exp.UK.1e6.clump, is.null)]
+
+## format the exposure data
+exp.UK.1e6.clump.cleaned <- lapply(exp.UK.1e6.clump.cleaned, function(x){
+  x <-  separate(x, col = CHRPOS, into = c("chr", "bp"), sep = ":")
+})
+
+exp.UK.1e6.clump.cleaned <- lapply(exp.UK.1e6.clump.cleaned, function(x){
+  IV_METABOLITS <- TwoSampleMR::format_data(x, # should be data.frame 
+                                   type= "exposure",
+                                   phenotype_col = "Metabolite",
+                                   snp_col = "rsid",
+                                   beta_col = "Effect",
+                                   se_col = "StdErr",
+                                   eaf_col = "Freq1",
+                                   pval_col = "pval",
+                                   effect_allele_col = "Allele1", # effect allele
+                                   other_allele_col = "Allele2", # other allele
+                                   samplesize_col = "N",
+                                   chr_col = "chr",
+                                   pos_col = "bp") 
+})
+
+save(exp.UK.1e6.clump.cleaned, file = "GWAS_Metabolites/GWAS_Met_UK/INTERVAL_UK_1e-6_clumped_clean.Rdata") # save, after clumping
+```
+
+## Outcome data
+```{r outcome_data}
+# outcome1
+out.file = "./GWAS_NAFLD"
+out_GWAS1 <- fread(file = paste0(out.file, "/Biopsy_study/01_Biopsy_NAFLD_GWAS/GCST90011885_buildGRCh37.tsv.gz")) %>% as.data.frame() %>%
+  dplyr::mutate(cases = 1483,
+         controls = 17781,
+         sample_size = 1483+17781,
+         PHENO = "NAFLD_Biopsy")
+
+colnames(out_GWAS1)[1:11]<- c("SNP", "pvalue", "chrom", "position", "A1", "A2", "OR", "lowci", "highci", "BETA", "SE")
+
+out_GWAS1 <- out_GWAS1 %>% dplyr::select(SNP, pvalue, chrom, position, A1, A2, BETA, SE, cases, controls, sample_size, PHENO)
+
+# outcome2
+out_GWAS2_2 <- fread(file = "./GWAS_NAFLD/MVP_Cohort/NAFLD.EUR.MVP.2021.2.txt") %>% as.data.frame()
+colnames(out_GWAS2_2)<- c("SNP", "chrom","position","A1", "A2", "EAF", "BETA", "SE", "pvalue",  "sample_size", "OR", "PHENO") 
+
+# outcome3
+out_GWAS3 <- fread(file =  paste0(out.file, "/EHR_Cohort/02_Eletronic health record_NAFLD_GWAS/GCST90091033_buildGRCh37.tsv.gz")) %>%
+  as.data.frame() %>% 
+  mutate(cases = 8434,
+        controls = 770180,
+        sample_size = 8434+770180,
+        PHENO = "Medical_Record_NAFLD")
+
+colnames(out_GWAS3)[1:9]<- c("SNP", "chrom", "position", "A1", "A2", "EAF","BETA",  "SE" , "pvalue")
+
+out_GWAS3 <- out_GWAS3 %>% dplyr::select(SNP, pvalue, chrom, position, A1, A2, BETA, SE, cases, controls, sample_size, PHENO)
+# head(out_GWAS2_2,20)
+
+```
+
+## missing snps in the outcome
+```{r message=FALSE}
+load(file = "GWAS_NAFLD/GWAS_Outcome.Rdata")
+
+## Look for the snps need proxied SNP in the exposure, in GWAS outcome1
+snps_need_proxy_UK1 <- lapply(exp.UK.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS1)
+})
+
+snps_need_proxy_UK2 <- lapply(exp.UK.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS2_2)
+})
+
+snps_need_proxy_UK3 <- lapply(exp.UK.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS3)
+})
+
+out_full1 <- prep_func(snp_proxy = snps_need_proxy_UK1, out_full = out_GWAS1) 
+# tail(out_full1, 20)
+out_full2 <- prep_func(snp_proxy = snps_need_proxy_UK2, out_full = out_GWAS2_2)
+out_full3 <- prep_func(snp_proxy = snps_need_proxy_UK3, out_full = out_GWAS3)
+
+save(out_full1, out_full2, out_full3, file = "GWAS_NAFLD/GWAS_Outcome_full.Rdata") # save the outcome after looking for proxies
+```
+
+## Harmonization
+- `1e-6`
+
+```{r Harmonization}
+load(file = "GWAS_NAFLD/GWAS_Outcome_full.Rdata")
+load(file = "GWAS_Metabolites/GWAS_Met_UK/INTERVAL_UK_1e-6_clumped_clean.Rdata")
+
+# format outcomes
+Met_Biopsy_NAFLD <- lapply(exp.UK.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full1, snp_exposure = x$SNP) # out_full1 as the outcome data
+})
+
+Met_cALT_NAFLD <- lapply(exp.UK.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full2, snp_exposure = x$SNP) # out_full2 as the outcome data
+})
+
+Met_EHR_NAFLD <- lapply(exp.UK.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full3, snp_exposure = x$SNP) # out_full3 as the outcome data
+})
+
+save(Met_Biopsy_NAFLD, Met_cALT_NAFLD, Met_EHR_NAFLD, file = "Met_NAFLD_Format.Rdata")
+
+### Harmonization
+load(file = "Met_NAFLD_Format.Rdata")
+## Biopsy_NAFLD (Harmonization)
+UK_Biopsy_Harmonized_1e6 <- list()
+for (i in 1:length(Met_Biopsy_NAFLD)) {
+  exp_dat <- exp.UK.1e6.clump.cleaned[[i]] 
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_Biopsy_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE)
+  UK_Biopsy_Harmonized_1e6[[i]] <- temp1
+}
+UK_Biopsy_Harmonized_1e6.2 <- lapply(UK_Biopsy_Harmonized_1e6, fstat_fun)
+
+## MVP_NAFLD (Harmonization)
+UK_MVP_Harmonized_1e6 <- list()
+for (i in 1:length(Met_cALT_NAFLD)) {
+  exp_dat <- exp.UK.1e6.clump.cleaned[[i]]
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_cALT_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE)
+  UK_MVP_Harmonized_1e6[[i]] <- temp1
+}
+UK_MVP_Harmonized_1e6.2 <- lapply(UK_MVP_Harmonized_1e6, fstat_fun)
+
+# EHR_NAFLD (Harmonization)
+UK_EHR_Harmonized_1e6 <- list()
+for (i in 1:length(Met_EHR_NAFLD)) {
+  exp_dat <- exp.UK.1e6.clump.cleaned[[i]]
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_EHR_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE)
+  UK_EHR_Harmonized_1e6[[i]] <- temp1
+}
+
+UK_EHR_Harmonized_1e6.2 <- lapply(UK_EHR_Harmonized_1e6, fstat_fun)
+
+save(UK_Biopsy_Harmonized_1e6.2, UK_MVP_Harmonized_1e6.2, UK_EHR_Harmonized_1e6.2, file = "UK_NAFLD_1e6_Harmonization.Rdata")
+```
+
+## MR
+- MR (IVW method)
+
+```{r MR_analysis, message=FALSE}
+source(file = "Functions.R")
+load(file = "UK_NAFLD_1e6_Harmonization.Rdata")
+
+### count if there are some SNPs available for multiple metabolites
+UK_Biopsy_Harmonized_1e6.2 <- do.call(rbind, UK_Biopsy_Harmonized_1e6.2)
+temp <- table(UK_Biopsy_Harmonized_1e6.2$SNP) %>% as.data.frame() %>% 
+  arrange(-Freq)
+View(temp)
+UK_Biopsy_Harmonized_1e6.2$pval.outcome.more_0.05 <- ifelse(UK_Biopsy_Harmonized_1e6.2$pval.outcome > 0.05, "yes", "no")
+
+UK_Biopsy_Harmonized_1e6.2 <- UK_Biopsy_Harmonized_1e6.2 %>% 
+  filter(SNP != "rs1260326") %>% 
+  filter(pval.outcome.more_0.05 == "yes")
+
+UK_Biopsy_Harmonized_1e6.2 <- split(UK_Biopsy_Harmonized_1e6.2, UK_Biopsy_Harmonized_1e6.2$exposure)
+
+# 
+table(UK_Biopsy_Harmonized_1e6.2$pval.outcome.more_0.05) # actually there are 80 variants associated with the outcome
+table(UK_Biopsy_Harmonized_1e6.2$mr_keep, UK_Biopsy_Harmonized_1e6.2$pval.outcome.more_0.05)
+
+UK_MVP_Harmonized_1e6.2 <- do.call(rbind, UK_MVP_Harmonized_1e6.2)
+temp <- table(UK_MVP_Harmonized_1e6.2$SNP) %>% as.data.frame() %>% 
+  arrange(-Freq)
+View(temp)
+
+UK_EHR_Harmonized_1e6.2 <- do.call(rbind, UK_EHR_Harmonized_1e6.2)
+temp <- table(UK_EHR_Harmonized_1e6.2$SNP) %>% as.data.frame() %>% 
+  arrange(-Freq)
+View(temp)
+
+## rs1260326 could be influenced by pleiotropy effects 
+UK_Biopsy_Harmonized_1e6.2 <- do.call(rbind, UK_Biopsy_Harmonized_1e6.2) %>% 
+  filter(SNP != "rs1260326") # remove the variants due to it's related to 14 metabolites
+
+UK_Biopsy_Harmonized_1e6.2 <- split(UK_Biopsy_Harmonized_1e6.2, UK_Biopsy_Harmonized_1e6.2$exposure)
+
+## MR for Biopsy data
+UK_to_Biopsy_mr_res_1e6 <- mr_keyong(dat = UK_Biopsy_Harmonized_1e6.2) 
+UK_to_Biopsy_mr_res_1e6_full <- do.call(rbind, UK_to_Biopsy_mr_res_1e6)
+
+UK_to_Biopsy_mr_res_1e6_full_correct <- UK_to_Biopsy_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(UK_to_Biopsy_mr_res_1e6_full_correct) # 0 metabolites
+
+## MR for cALT data
+UK_MVP_Harmonized_1e6.2 <- do.call(rbind, UK_MVP_Harmonized_1e6.2) %>% 
+  filter(SNP != "rs1260326")
+
+UK_MVP_Harmonized_1e6.2$pval.outcome.more_0.05 <- ifelse(UK_MVP_Harmonized_1e6.2$pval.outcome > 0.05, "yes", "no")
+
+UK_MVP_Harmonized_1e6.2 <- UK_MVP_Harmonized_1e6.2 %>% 
+  filter(pval.outcome.more_0.05 == "yes")
+
+UK_MVP_Harmonized_1e6.2 <- split(UK_MVP_Harmonized_1e6.2, UK_MVP_Harmonized_1e6.2$exposure)
+
+UK_to_MVP_mr_res_1e6 <- mr_keyong(UK_MVP_Harmonized_1e6.2)
+UK_to_MVP_mr_res_1e6_full <- do.call(rbind, UK_to_MVP_mr_res_1e6)
+
+UK_to_MVP_mr_res_1e6_full_correct <- UK_to_MVP_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(UK_to_MVP_mr_res_1e6_full_correct) # 13 metabolites
+
+## MR for EHR data
+UK_EHR_Harmonized_1e6.2 <- do.call(rbind, UK_EHR_Harmonized_1e6.2) %>% 
+  filter(SNP != "rs1260326")
+
+UK_EHR_Harmonized_1e6.2$pval.outcome.more_0.05 <- ifelse(UK_EHR_Harmonized_1e6.2$pval.outcome > 0.05, "yes", "no")
+table(UK_EHR_Harmonized_1e6.2$pval.outcome.more_0.05) ## 66 SNPs with no
+
+UK_EHR_Harmonized_1e6.2 <- UK_EHR_Harmonized_1e6.2 %>% 
+  filter(pval.outcome.more_0.05 == "yes")
+
+UK_EHR_Harmonized_1e6.2 <- split(UK_EHR_Harmonized_1e6.2, UK_EHR_Harmonized_1e6.2$exposure)
+
+UK_to_EHR_mr_res_1e6 <- mr_keyong(UK_EHR_Harmonized_1e6.2)
+UK_to_EHR_mr_res_1e6_full <- do.call(rbind, UK_to_EHR_mr_res_1e6)
+
+UK_to_EHR_mr_res_1e6_full_correct <- UK_to_EHR_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(UK_to_EHR_mr_res_1e6_full_correct) # 0 metabolites
+
+## save results
+UK_to_NAFLD_1e6 <- list(UK_to_Biopsy_mr_res_1e6_full = UK_to_Biopsy_mr_res_1e6_full,
+                      UK_to_Biopsy_mr_res_1e6_full_correct = UK_to_Biopsy_mr_res_1e6_full_correct,
+                      UK_to_MVP_mr_res_1e6_full = UK_to_MVP_mr_res_1e6_full,
+                      UK_to_MVP_mr_res_1e6_full_correct = UK_to_MVP_mr_res_1e6_full_correct,
+                      UK_to_EHR_mr_res_1e6_full = UK_to_EHR_mr_res_1e6_full,
+                      UK_to_EHR_mr_res_1e6_full_correct = UK_to_EHR_mr_res_1e6_full_correct)
+
+save(UK_to_NAFLD_1e6, file = "UK_to_NAFLD_1e6_res.Rdata")
+save(UK_to_NAFLD_1e6, file = "UK_to_NAFLD_1e6_res_0506.Rdata")
+
+```
+
+### Metabolites
+- Combination of the name of metabolites
+
+```{r Metabolites}
+Metabo_list <- read.xlsx(xlsxFile = "Metabolite_list_Keyong.xlsx", sheet = 2)
+Metabo_list$MA_code <- paste0("M", Metabo_list$MB_ID)
+# Metabo_list <- subset(Metabo_list, Metabo_list$MA_code != "MNA")
+
+UK_to_Biopsy_mr_res_1e6_full <-  merge(UK_to_Biopsy_mr_res_1e6_full, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+UK_to_MVP_mr_res_1e6_full <- merge(UK_to_MVP_mr_res_1e6_full, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+UK_to_EHR_mr_res_1e6_full <- merge(UK_to_EHR_mr_res_1e6_full, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+
+# ## Met_to_MVP_NAFLD_mr.2
+# UK_to_Biopsy_mr_res_1e6_full_correct <- merge(UK_to_Biopsy_mr_res_1e6_full_correct, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+# write.csv(UK_to_Biopsy_mr_res_1e6_full_correct, file = "UK_Met_to_Biospy_NAFLD_mr_1e6.csv", quote = F, row.names = F)
+# 
+# ##
+# UK_to_MVP_mr_res_1e6_full_correct <- merge(UK_to_MVP_mr_res_1e6_full_correct, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+# write.csv(UK_to_MVP_mr_res_1e6_full_correct, file = "UK_Met_to_MVP_NAFLD_mr_1e6.csv", quote = F, row.names = F)
+# 
+# ##
+# UK_to_EHR_mr_res_1e6_full_correct <- merge(UK_to_EHR_mr_res_1e6_full_correct, Metabo_list, by.x = "exposure", by.y = "MA_code", all.x = T)
+# write.csv(UK_to_EHR_mr_res_1e6_full_correct, file = "UK_Met_to_EHR_NAFLD_mr_1e6.csv", quote = F, row.names = F)
+```
+
+
+
+
+
+
+

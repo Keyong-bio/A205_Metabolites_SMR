@@ -1,0 +1,32 @@
+---
+title: "03_Sensitivity_Analysis"
+author: "Keyong"
+date: "2024-04-25"
+output: html_document
+---
+
+```{r}
+## colocalization 
+library(coloc)
+
+## CLSA metabolites -> Biopsy_NAFLD, cALT_NAFLD, EHR_NAFLD
+
+
+
+
+
+```
+
+## pleitropy check
+```{r}
+## phenoScanner
+library(phenoscanner)
+
+CLSA_EHR_Harmonized_5e8.2$SNP[1]
+
+# res <- phenoscanner(snpquery = CLSA_EHR_Harmonized_5e8.2$SNP[1])
+# head(res$results)
+# res$snps
+
+```
+

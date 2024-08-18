@@ -1,0 +1,348 @@
+---
+title: "00_CLSA_GWAS_Met_1e-6"
+author: "Keyong"
+date: "2024-03-22"
+output: html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: paper
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+## Load the package
+```{r packages, echo=FALSE, message=FALSE}
+library(pacman)
+pacman::p_load(data.table, ieugwasr, openxlsx, dplyr,
+       compareGroups, ggplot2, TwoSampleMR, LDlinkR,
+       reshape2, # melt dataset
+       ggcorrplot, # create the correlation matrix
+       ggforestplot, # For forest plots of metabolites
+       broom, # for nice output
+       glmnet, # LASSO regression
+       tableone, # Descriptive 
+       stringr,
+       tidyr, gwasrapidd)
+
+```
+
+## Load the data
+- GWAS_Metabolites in CLSA
+
+```{r}
+exp.dir = "./GWAS_Metabolites/"
+## CLSA metabolites  
+tempfile = fread(file = paste0(exp.dir,"GWAS_Met_CLSA/Download_Metabolites.txt")) # Metabolites names
+exp.CLSA <- list.files(path = paste0(exp.dir,"GWAS_Met_CLSA/"), pattern = ".gz") %>% as.data.frame()
+names(exp.CLSA) <- "name"
+exp.CLSA$ID <- str_split(exp.CLSA$name, pattern = "_", simplify = T)[,1] # GCST Number
+exp.CLSA_info <- inner_join(exp.CLSA, tempfile, by = c("ID" = "Study_id"))
+```
+
+## Function to filter out SNPs with different p_threshold
+- 1e-6
+
+```{r prepare_data, message=FALSE}
+Loaddat <- function(p_val_threshold, dat.dir, Met_GWAS_info){
+  
+  # dat.dir = "GWAS_Met_CLSA"
+  IV_Met_NoClump = list() # Set a output = list() 
+  
+  filepath = paste0("/exports/clinicalepi/Keyong/Project2_Mendelian Randomization/GWAS_Metabolites/", dat.dir) # data set
+  files = list.files(filepath, pattern = ".gz")
+
+  for (i in files) {
+      
+    ## i = files[[1]]
+    print(paste0("-----", i , "------")) # follow the process
+    
+    IV_METABOLITS <- fread(input = paste0(filepath, i)) %>%  as.data.frame() %>% 
+      filter(p_value < p_val_threshold)
+    
+    if (nrow(IV_METABOLITS) == 0 | sum(!is.na(IV_METABOLITS$variant_id)) == 0) {
+      IV_Met_NoClump[[i]] <- NA 
+      
+    } else {
+      
+      IV_METABOLITS$PHENO <- Met_GWAS_info[Met_GWAS_info$name == i,]$Trait
+      IV_METABOLITS$Samplesize <- Met_GWAS_info[Met_GWAS_info$name == i,]$Size
+      IV_METABOLITS <- TwoSampleMR::format_data(IV_METABOLITS, # should be data.frame 
+                                   type= "exposure",
+                                   phenotype_col = "PHENO",
+                                   snp_col = "variant_id",
+                                   beta_col = "beta",
+                                   se_col = "standard_error",
+                                   eaf_col = "effect_allele_frequency",
+                                   pval_col = "p_value",
+                                   effect_allele_col = "effect_allele",
+                                   other_allele_col = "other_allele",
+                                   samplesize_col = "Samplesize",
+                                   chr_col = "chromosome",
+                                   pos_col = "base_pair_location") 
+      
+      IV_Met_NoClump[[i]] <- IV_METABOLITS
+      
+    }
+    rm(IV_METABOLITS)
+  }
+  
+  return(IV_Met_NoClump)
+}
+
+exp.CLSA.1e6 <- Loaddat(p_val_threshold = 1e-6, dat.dir = "GWAS_Met_CLSA/", Met_GWAS_info = exp.CLSA_info)
+## 5e-8 
+exp.CLSA.5e8 <- Loaddat(p_val_threshold = 5e-8, dat.dir = "GWAS_Met_CLSA/", Met_GWAS_info = exp.CLSA_info)
+
+load("CLSA_1e-6.rdata")
+
+## save(exp.CLSA.1e6, file = "CLSA_1e-6.rdata")
+## save(exp.CLSA.5e8, file = "CLSA_5E-8.rdata")
+
+## Clump step for exposure
+untar(tarfile = "./1kg.v3.tgz") # LD refrence panel
+
+# devtools::install_github("explodecomputer/genetics.binaRies") 
+# locally clump action
+exp.CLSA.1e6.clump <- lapply(exp.CLSA.1e6, function(x){
+  temp <- x %>% rename(rsid = SNP, pval = pval.exposure)
+  temp1 <- tryCatch({
+     ld_clump(dat = temp, clump_kb = 500, ## 500kb
+              clump_r2 = 0.1, 
+              plink_bin = genetics.binaRies::get_plink_binary(),
+              bfile = "./EUR/EUR")
+  }, error = function(e) {
+    message("Error in ld_clump for dataset: ", e$message)
+    return(NULL) 
+  })
+    return(temp1)
+  })
+
+# 1e-6 criteria
+exp.CLSA.1e6.clump.cleaned <- exp.CLSA.1e6.clump[!sapply(exp.CLSA.1e6.clump, is.null)] # 81 metabolites
+
+## Rename back 
+exp.CLSA.1e6.clump.cleaned <- lapply(exp.CLSA.1e6.clump.cleaned, function(x){
+  dplyr::rename(x, # should be data.frame 
+                SNP = rsid,
+                pval.exposure = pval) 
+})
+
+# rm(exp.CLSA.1e6.clump)
+```
+
+## Read in the outcome data
+- NAFLD (Biospy-based)
+
+```{r NAFLD_outcomes, message = F}
+# Load Outcome GWAS
+# 1. Biospy
+out.file = "./clinicalepi/Keyong/Project2_Mendelian Randomization/GWAS_NAFLD"
+out_GWAS1 <- fread(file = paste0(out.file, "/Biopsy_study/01_Biopsy_NAFLD_GWAS/GCST90011885_buildGRCh37.tsv.gz")) %>% as.data.frame() %>%
+  mutate(cases = 1483,
+         controls = 17781,
+         sample_size = 1483+17781,
+         PHENO = "NAFLD_Biopsy")
+
+colnames(out_GWAS1)[1:11]<- c("SNP", "pvalue", "chrom", "position", "A1", "A2", "OR", "lowci", "highci", "BETA", "SE")
+
+out_GWAS1 <- out_GWAS1 %>% dplyr::select(SNP, pvalue, chrom, position, A1, A2, BETA, SE, cases, controls, sample_size, PHENO)
+
+out_GWAS2_2 <- fread(file = "./GWAS_NAFLD/MVP_Cohort/NAFLD.EUR.MVP.2021.2.txt") %>% as.data.frame()
+colnames(out_GWAS2_2)<- c("SNP", "chrom","position","A1", "A2", "EAF", "BETA", "SE", "pvalue",  "sample_size", "OR", "PHENO") 
+
+
+# Load Outcome data: Medical Record
+out_GWAS3 <- fread(file =  paste0(out.file, "/EHR_Cohort/02_Eletronic health record_NAFLD_GWAS/GCST90091033_buildGRCh37.tsv.gz")) %>%
+  as.data.frame() %>% 
+  mutate(cases = 8434,
+        controls = 770180,
+        sample_size = 8434+770180,
+        PHENO = "Medical_Record_NAFLD")
+
+colnames(out_GWAS3)[1:9]<- c("SNP", "chrom", "position", "A1", "A2", "EAF","BETA",  "SE" , "pvalue")
+out_GWAS3 <- out_GWAS3 %>% dplyr::select(SNP, pvalue, chrom, position, A1, A2, BETA, SE, cases, controls, sample_size, PHENO)
+
+load(file = "GWAS_NAFLD/GWAS_Outcome.Rdata")
+
+## Look for the snps need proxied SNP in the exposure
+source("Functions.R")
+snps_need_proxy_Biopsy <- lapply(exp.CLSA.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS1)
+})
+
+snps_need_proxy_MVP <- lapply(exp.CLSA.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS2_2)
+})
+
+snps_need_proxy_EHR <- lapply(exp.CLSA.1e6.clump.cleaned, function(x) {
+  find_missing_SNP(exp_dat = x, out_dat = out_GWAS3)
+})
+
+## looking for the proxied SNPs for the missing SNPs
+out_full_CLSA_Bio <- prep_func(snp_proxy = snps_need_proxy_Biopsy, out_full = out_GWAS1, input = exp.CLSA.1e6.clump.cleaned) 
+# tail(out_full1, 20)
+out_full_CLSA_MVP <- prep_func(snp_proxy = snps_need_proxy_MVP, out_full = out_GWAS2_2, input = exp.CLSA.1e6.clump.cleaned)
+
+out_full_CLSA_EHR <- prep_func(snp_proxy = snps_need_proxy_EHR, out_full = out_GWAS3, input = exp.CLSA.1e6.clump.cleaned)
+
+save(out_full_CLSA_Bio, out_full_CLSA_MVP, out_full_CLSA_EHR, file = "GWAS_NAFLD/GWAS_Outcome_full_CLSA_1E_6.Rdata")
+
+## format the outcome GWAS for the following analysis
+Met_Biopsy_NAFLD <- lapply(exp.CLSA.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full_CLSA_Bio, snp_exposure = x$SNP) # out_full_CLSA_Bio as the outcome data
+})
+
+Met_MVP_NAFLD <- lapply(exp.CLSA.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full_CLSA_MVP, snp_exposure = x$SNP) # out_full_CLSA_MVP as the outcome data
+})
+
+Met_EHR_NAFLD <- lapply(exp.CLSA.1e6.clump.cleaned, function(x){
+  Out_result = out_func(out_GWAS = out_full_CLSA_EHR, snp_exposure = x$SNP) # out_full_CLSA_EHR as the outcome data
+})
+
+```
+
+## Harmonization
+- Biopsy MASLD
+- MVP MASLD
+- EHR MASLD
+
+```{r harmonization, message=FALSE}
+## Harmonize data and exclude palindromic SNPs
+## Check the if the data contains NULL data frame
+CLSA_Biopsy_Harmonized_1e6 <- list()
+for (i in 1:length(Met_Biopsy_NAFLD)) {
+  exp_dat <- exp.CLSA.1e6.clump.cleaned[[i]]
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_Biopsy_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE)
+  CLSA_Biopsy_Harmonized_1e6[[i]] <- temp1
+}
+
+## Steiger Filtering / Filtering out the weak SNPs (F < 10)
+CLSA_Biopsy_Harmonized_1e6.2 <- lapply(CLSA_Biopsy_Harmonized_1e6, fstat_fun)
+
+## Harmonized with MVP_NAFLD
+## Met_MVP_NAFLD <- purrr::discard(Met_MVP_NAFLD, ~is.null(.) == T) 
+
+CLSA_MVP_Harmonized_1e6 <- list()
+for (i in 1:length(Met_MVP_NAFLD)) {
+  exp_dat <- exp.CLSA.1e6.clump.cleaned[[i]] 
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_MVP_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE) %>% 
+    mutate(pval.outcome.more_0.05 = ifelse(pval.outcome > 0.05, "yes", "no")) %>% 
+    filter(pval.outcome.more_0.05 == "yes")
+  
+  CLSA_MVP_Harmonized_1e6[[i]] <- temp1
+}
+
+CLSA_MVP_Harmonized_1e6.2 <- lapply(CLSA_MVP_Harmonized_1e6, fstat_fun)
+
+## Harmonized with EHR_NAFLD
+CLSA_EHR_Harmonized_1e6 <- list()
+for (i in 1:length(Met_EHR_NAFLD)) {
+  exp_dat <- exp.CLSA.1e6.clump.cleaned[[i]] 
+  temp1 <- harmonise_data(exposure_dat = exp_dat, outcome_dat = Met_EHR_NAFLD[[i]], action = 2)
+  temp1 <- temp1 %>% 
+    dplyr::filter(mr_keep == TRUE)
+  CLSA_EHR_Harmonized_1e6[[i]] <- temp1
+}
+
+CLSA_EHR_Harmonized_1e6.2 <- lapply(CLSA_EHR_Harmonized_1e6, fstat_fun)
+
+save(CLSA_Biopsy_Harmonized_1e6.2, CLSA_MVP_Harmonized_1e6.2, CLSA_EHR_Harmonized_1e6.2,
+     file = "CLSA_NAFLD_1e6_Harmonization.Rdata")
+```
+
+## MR analysis 
+1. Biopsy MASLD
+2. MVP MASLD
+3. EHR MASLD
+
+```{r MR_analysis}
+load(file = "CLSA_NAFLD_1e6_Harmonization.Rdata")
+
+############### Need to be discussed ##########
+# rs11045856 could be influenced by the pleiotropy effect (in 6 metabolites at the same time)
+
+CLSA_Biopsy_Harmonized_1e6.2 <- do.call(rbind, CLSA_Biopsy_Harmonized_1e6.2) %>% 
+   dplyr::filter(SNP != "rs11045856") %>% 
+   mutate(pval.outcome.more_0.05 = ifelse(pval.outcome > 0.05, "yes", "no")) %>% 
+   filter(pval.outcome.more_0.05 == "yes")
+
+### Exclusion based on PhenoScanner
+# library(phenoscanner) ### doesn't connect to the API
+# snps_lookup <- phenoscanner(
+#   snpquery = CLSA_Biopsy_Harmonized_1e6.2$SNP[1:100], pvalue = 5e-08
+# )$results %>%
+#   dplyr::filter(ancestry == "European") %>%
+#   dplyr::select(snp, trait, hg19_coordinates, study, pmid, beta, se, p)
+
+CLSA_Biopsy_Harmonized_1e6.2 <- split(CLSA_Biopsy_Harmonized_1e6.2, CLSA_Biopsy_Harmonized_1e6.2$exposure) # split harmonized data by exposure
+
+CLSA_MVP_Harmonized_1e6.2 <- do.call(rbind, CLSA_MVP_Harmonized_1e6.2) %>% 
+  dplyr::filter(SNP != "rs11045856") %>% 
+  mutate(pval.outcome.more_0.05 = ifelse(pval.outcome > 0.05, "yes", "no")) %>% 
+  filter(pval.outcome.more_0.05 == "yes")
+
+CLSA_MVP_Harmonized_1e6.2 <- split(CLSA_MVP_Harmonized_1e6.2, CLSA_MVP_Harmonized_1e6.2$exposure)
+
+CLSA_EHR_Harmonized_1e6.2 <- do.call(rbind, CLSA_EHR_Harmonized_1e6.2) %>% 
+  dplyr::filter(SNP != "rs11045856") %>% 
+  mutate(pval.outcome.more_0.05 = ifelse(pval.outcome > 0.05, "yes", "no")) %>% 
+  filter(pval.outcome.more_0.05 == "yes")
+
+
+CLSA_EHR_Harmonized_1e6.2 <- split(CLSA_EHR_Harmonized_1e6.2, CLSA_EHR_Harmonized_1e6.2$exposure)
+
+
+## MR analysis (Biopsy)
+CLSA_to_Biopsy_mr_res_1e6 <- mr_keyong(dat = CLSA_Biopsy_Harmonized_1e6.2) # 81 metabolites
+CLSA_to_Biopsy_mr_res_1e6_full <- do.call(rbind, CLSA_to_Biopsy_mr_res_1e6)
+
+CLSA_to_Biopsy_mr_res_1e6_correct <- CLSA_to_Biopsy_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(CLSA_to_Biopsy_mr_res_1e6_correct) # 0 metabolites
+
+## MR analysis (MVP)
+CLSA_to_MVP_mr_res_1e6 <- mr_keyong(dat = CLSA_MVP_Harmonized_1e6.2) # 81 metabolites
+CLSA_to_MVP_mr_res_1e6_full <- do.call(rbind, CLSA_to_MVP_mr_res_1e6)
+
+CLSA_to_MVP_mr_res_1e6_correct <- CLSA_to_MVP_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(CLSA_to_MVP_mr_res_1e6_correct) # 16 metabolites
+
+## MR analysis (EHR), eletronic health record
+
+CLSA_to_EHR_mr_res_1e6 <- mr_keyong(dat = CLSA_EHR_Harmonized_1e6.2) # 81 metabolites
+CLSA_to_EHR_mr_res_1e6_full <- do.call(rbind, CLSA_to_EHR_mr_res_1e6)
+
+CLSA_to_EHR_mr_res_1e6_correct <- CLSA_to_EHR_mr_res_1e6_full %>% 
+  filter(method == "Inverse variance weighted" | method == "Wald ratio") %>% 
+  dplyr::mutate(FDR = p.adjust(pval, method = "fdr")) %>% 
+  filter(FDR < 0.05) # BH correction
+dim(CLSA_to_EHR_mr_res_1e6_correct) # 0 obs
+
+CLSA_to_NAFLD_1e6 <- list(CLSA_to_Biopsy_mr_res_1e6_full = CLSA_to_Biopsy_mr_res_1e6_full,
+                          CLSA_to_Biopsy_mr_res_1e6_correct = CLSA_to_Biopsy_mr_res_1e6_correct,
+                          CLSA_to_MVP_mr_res_1e6_full = CLSA_to_MVP_mr_res_1e6_full,
+                          CLSA_to_MVP_mr_res_1e6_correct = CLSA_to_MVP_mr_res_1e6_correct,
+                          CLSA_to_EHR_mr_res_1e6_full = CLSA_to_EHR_mr_res_1e6_full,
+                          CLSA_to_EHR_mr_res_1e6_correct = CLSA_to_EHR_mr_res_1e6_correct)
+
+save(CLSA_to_NAFLD_1e6, file = "CLSA_to_NAFLD_1e6_res.Rdata")
+save(CLSA_to_NAFLD_1e6, file = "CLSA_to_NAFLD_1e6_res_0506.Rdata")
+```
+
+
+

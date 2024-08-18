@@ -1,0 +1,64 @@
+---
+title: "CAUSE_MR"
+author: "Keyong Deng"
+date: "`r Sys.Date()`"
+output: html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: paper
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# install cause package
+# devtools::install_github("jean997/cause@v1.2.0")
+
+```
+There're four steps to run CAUSE mendelian randomization analysis
+1. Format the data for use with CAUSE
+2. Calculate the nuisance parameters
+3. LD pruning
+4. Fit CAUSE and look at the results
+
+```{r include=FALSE, echo=TRUE}
+library(cause)
+
+## import exposure data
+
+## import outcome data
+
+## Merge the exposure and outcome data
+
+## Calculate nuisance parameters
+
+## LD pruning 
+r2_threshold = 0.01
+pval_threshold = 1e-3
+
+exp_outcome_clump = ld_clump_local(exp_out, clump_kb = 10000, clump_r2 = r2_threshold, 
+                                   clump_p = pval_threshold, bfile = "./EUR/")
+
+topvars = exp_outcome_clump$rsid
+
+#-----Fit CAUSE and look at the results
+res <- cause(X = exp_out, variants = top_vars, param_ests = params)
+#look at results
+res$elpd
+#It returns "delta_elpd": Estimated difference in elpd. If delta_elpd is negative, model 2 has a better fit
+plot(res$sharing)
+plot(res$causal)
+summary(res, ci_size=0.95)
+plot(res)
+plot(res, type = "data")
+res$causal
+res$sharing
+
+## 
+
+
+```
+
